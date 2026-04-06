@@ -1,0 +1,66 @@
+# Ion-exchange simulation on equilibrated borosilicate glass with ReaxFF
+# Strategy:
+#  1) Read equilibrated glass.
+#  2) Replace a fraction of near-surface Na with K (proxy for contact with K-rich salt).
+#  3) Run at exchange temperature to let Na/K interdiffuse.
+#
+# Type map:
+#   1 O
+#   2 Si
+#   3 B
+#   4 Na
+#   5 K
+
+units           real
+atom_style      charge
+boundary        p p p
+
+read_data       borosilicate_equilibrated.data
+
+pair_style      reaxff NULL
+pair_coeff      * * ffield.reax.borosilicate O Si B Na K
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+timestep        0.25
+fix             fq all qeq/reaxff 1 0.0 10.0 1.0e-6 reaxff
+
+thermo          1000
+thermo_style    custom step temp press pe ke etotal density
+
+# Exchange temperature (e.g. molten nitrate bath process window)
+variable        Tex equal 723.0    # K (~450 C)
+
+# Define a top surface exchange zone (10 A thick).
+variable        zhi equal zhi
+variable        zcut equal v_zhi-10.0
+region          top_layer block INF INF INF INF ${zcut} INF units box
+
+group           sodium type 4
+group           top region top_layer
+group           na_top intersect sodium top
+
+# Swap 35% of Na in top layer to K as initial exchanged population.
+# (Type conversion only; ReaxFF + dynamics will relax local bonding/charges.)
+set             group na_top type/fraction 5 0.35 20260406
+
+# Keep bottom 5 A lightly restrained to mimic bulk support.
+variable        zlo equal zlo
+variable        zfix equal v_zlo+5.0
+region          bottom_layer block INF INF INF INF INF ${zfix} units box
+group           bottom region bottom_layer
+fix             pin bottom spring/self 3.0
+
+# Run exchange dynamics
+fix             nvtx all nvt temp ${Tex} ${Tex} 100.0
+run             1200000      # 300 ps
+unfix           nvtx
+
+# Cool to ambient and store result
+fix             cool all nvt temp ${Tex} 300.0 100.0
+run             400000       # 100 ps
+unfix           cool
+
+write_data      borosilicate_ion_exchanged.data
+write_restart   borosilicate_ion_exchanged.restart

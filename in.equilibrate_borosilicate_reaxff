@@ -1,0 +1,57 @@
+# Equilibrate sodium borosilicate glass with ReaxFF (melt-quench workflow)
+# Atom type map used here:
+#   1 O
+#   2 Si
+#   3 B
+#   4 Na
+#   5 K
+
+units           real
+atom_style      charge
+boundary        p p p
+
+read_data       borosilicate_init.data
+
+pair_style      reaxff NULL
+pair_coeff      * * ffield.reax.borosilicate O Si B Na K
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+timestep        0.25
+
+# Charge equilibration required by ReaxFF
+fix             fq all qeq/reaxff 1 0.0 10.0 1.0e-6 reaxff
+
+thermo          1000
+thermo_style    custom step temp press pe ke etotal density vol
+
+# ----- Stage 0: remove bad overlaps -----
+min_style       cg
+minimize        1.0e-4 1.0e-6 2000 10000
+
+# Give random velocities near ambient before heating.
+velocity        all create 300.0 948372 dist gaussian mom yes rot yes
+
+# ----- Stage 1: Heat up to melt -----
+fix             npt_heat all npt temp 300.0 4000.0 100.0 iso 1.0 1.0 1000.0
+run             200000      # 50 ps
+unfix           npt_heat
+
+# ----- Stage 2: Hold melt -----
+fix             npt_melt all npt temp 4000.0 4000.0 100.0 iso 1.0 1.0 1000.0
+run             400000      # 100 ps
+unfix           npt_melt
+
+# ----- Stage 3: Quench to room temperature -----
+fix             npt_quench all npt temp 4000.0 300.0 100.0 iso 1.0 1.0 1000.0
+run             1600000     # 400 ps
+unfix           npt_quench
+
+# ----- Stage 4: Relax at 300 K -----
+fix             npt_relax all npt temp 300.0 300.0 100.0 iso 1.0 1.0 1000.0
+run             400000      # 100 ps
+unfix           npt_relax
+
+write_data      borosilicate_equilibrated.data
+write_restart   borosilicate_equilibrated.restart
