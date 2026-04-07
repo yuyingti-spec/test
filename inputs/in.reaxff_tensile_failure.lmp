@@ -1,0 +1,66 @@
+# ReaxFF tensile-failure test for hollow borosilicate optical fiber shell
+# Usage:
+# lmp -in inputs/in.reaxff_tensile_failure.lmp -var data_file data/fiber_hollow.data -var ffield_file ffield.reax.borosilicate
+
+units           real
+atom_style      charge
+boundary        p p f
+
+variable data_file string data/fiber_hollow.data
+variable ffield_file string ffield.reax.borosilicate
+
+read_data       ${data_file}
+
+pair_style      reaxff NULL
+pair_coeff      * * ${ffield_file} Si B O Na Al
+
+neighbor        2.0 bin
+neigh_modify    every 10 delay 0 check yes
+
+fix             qeq all qeq/reaxff 1 0.0 10.0 1e-6 reaxff
+
+thermo_style    custom step temp press pxx pyy pzz lx ly lz etotal pe ke
+thermo          500
+
+# Reactive species tracking
+fix             fspec all reaxff/species 100 10 1000 inputs/species.map species.out
+
+# ---------- Stage 1: initial relaxation ----------
+reset_timestep  0
+velocity        all create 300.0 492845 rot yes dist gaussian
+fix             nvt1 all nvt temp 300.0 300.0 100.0
+run             20000
+unfix           nvt1
+
+# ---------- Stage 2: zero-pressure lateral equilibration ----------
+# Keep axial direction fixed for pre-tension baseline.
+fix             npt1 all npt temp 300.0 300.0 100.0 x 0.0 0.0 1000.0 y 0.0 0.0 1000.0 couple none
+run             40000
+unfix           npt1
+
+# ---------- Stage 3: tensile loading to failure ----------
+# Convert engineering strain rate from 1/ps to box deformation in z.
+variable        erate equal 1.0e-6
+fix             nvt2 all nvt temp 300.0 300.0 100.0
+fix             def1 all deform 1 z erate ${erate} units box remap x
+
+# Stress/strain output
+variable        Lz0 equal lz
+variable        strain equal (lz-v_Lz0)/v_Lz0
+variable        sigmaz equal -pzz*0.000101325
+
+fix             fout all print 200 "${step} ${v_strain} ${v_sigmaz}" file stress_strain.out screen no
+
+dump            d1 all custom 1000 dump.tensile.lammpstrj id type q x y z
+
+run             120000
+
+# ---------- Cleanup ----------
+unfix           qeq
+unfix           fspec
+unfix           nvt2
+unfix           def1
+unfix           fout
+undump          d1
+
+write_data      data/fiber_post_tensile.data
